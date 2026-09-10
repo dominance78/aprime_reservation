@@ -65,7 +65,18 @@ export default function Home() {
             groupId: row.group_id,
           };
         });
-        setReservations(prev => ({ ...prev, ...dbData }));
+        setReservations(prev => {
+          const next = { ...prev };
+          // 이전 로컬 스토리지 데이터 중 '현재 보고 있는 날짜'의 데이터는 일단 싹 지워서 초기화합니다.
+          // (그래야 DB에서 삭제된 내역이 모바일 화면에서도 지워집니다.)
+          Object.keys(next).forEach(k => {
+            if (k.startsWith(dateStr)) {
+              delete next[k];
+            }
+          });
+          // 그리고 DB에서 방금 가져온 100% 최신 데이터로만 다시 채웁니다.
+          return { ...next, ...dbData };
+        });
       } catch (err) {
         console.warn("Supabase DB 통신 실패 (환경변수 확인 필요). 로컬 임시 데이터를 유지합니다.", err);
       }
