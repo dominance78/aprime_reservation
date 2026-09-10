@@ -168,37 +168,40 @@ export default function Home() {
     try {
       // 1. API 호출 시도
       await createReservations(payload);
-    } catch (e: any) {
-      console.warn("DB 에러: 로컬 UI에만 반영합니다.", e.message);
-    }
-
-    // 2. 로컬 State 업데이트
-    setReservations((prev) => {
-      const next = { ...prev };
-      payload.forEach((p) => {
-        next[`${dateStr}_${p.time_slot.slice(0, 5)}`] = { teamName: team, bookerName: name, groupId };
+      
+      // 2. 로컬 State 업데이트
+      setReservations((prev) => {
+        const next = { ...prev };
+        payload.forEach((p) => {
+          next[`${dateStr}_${p.time_slot.slice(0, 5)}`] = { teamName: team, bookerName: name, groupId };
+        });
+        return next;
       });
-      return next;
-    });
-    
-    setIsReserveModalOpen(false);
+      
+      setIsReserveModalOpen(false);
+      alert("예약이 완료되었습니다.");
+    } catch (e: any) {
+      console.warn("DB 에러:", e.message);
+      alert(e.message || "예약에 실패했습니다. 다시 시도해주세요.");
+    }
   };
 
-  const handleCancelSubmit = async (groupId: string, passwordInput?: string) => {
     try {
       await cancelReservationGroup(groupId, passwordInput || "0000");
-    } catch (e: any) {
-      console.warn("DB 취소 실패: 로컬 UI에만 반영합니다.", e.message);
-    }
-    
-    setReservations((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((k) => {
-        if (next[k].groupId === groupId) delete next[k];
+      
+      setReservations((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((k) => {
+          if (next[k].groupId === groupId) delete next[k];
+        });
+        return next;
       });
-      return next;
-    });
-    setIsManageModalOpen(false);
+      setIsManageModalOpen(false);
+      alert("예약이 성공적으로 취소되었습니다.");
+    } catch (e: any) {
+      console.warn("DB 취소 실패:", e.message);
+      alert(e.message || "예약 취소에 실패했습니다. 비밀번호를 다시 확인해주세요.");
+    }
   };
 
   const handleModifySubmit = async (groupId: string, newStart: string, newEnd: string, passwordInput?: string) => {
@@ -230,22 +233,24 @@ export default function Home() {
 
     try {
       await modifyReservationGroup(groupId, passwordInput || "0000", payload);
+      
+      // 2. 로컬 State 변경
+      setReservations((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((k) => {
+          if (next[k].groupId === groupId) delete next[k];
+        });
+        payload.forEach((p) => {
+          next[`${dateStr}_${p.time_slot.slice(0, 5)}`] = { teamName, bookerName, groupId };
+        });
+        return next;
+      });
+      setIsManageModalOpen(false);
+      alert("예약 시간이 수정되었습니다.");
     } catch (e: any) {
-      console.warn("DB 변경 실패: 로컬 UI에만 반영합니다.", e.message);
+      console.warn("DB 변경 실패:", e.message);
+      alert(e.message || "예약 수정에 실패했습니다. 비밀번호를 확인해주세요.");
     }
-
-    // 2. 로컬 State 변경
-    setReservations((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((k) => {
-        if (next[k].groupId === groupId) delete next[k];
-      });
-      payload.forEach((p) => {
-        next[`${dateStr}_${p.time_slot.slice(0, 5)}`] = { teamName, bookerName, groupId };
-      });
-      return next;
-    });
-    setIsManageModalOpen(false);
   };
 
   const isContinuation = (time: string, groupId: string) => {
