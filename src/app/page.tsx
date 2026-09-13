@@ -197,6 +197,7 @@ export default function Home() {
     }
   };
 
+  const handleCancelSubmit = async (groupId: string, passwordInput?: string) => {
     try {
       await cancelReservationGroup(groupId, passwordInput || "0000");
       
