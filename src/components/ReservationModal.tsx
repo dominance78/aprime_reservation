@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { format } from "date-fns";
 import { TEAM_LIST, TeamName } from "@/constants/teams";
 
 interface ReservationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: (team: string, name: string, endTime: string, password?: string) => void;
+  onSuccess: (team: string, name: string, endTime: string, password: string) => Promise<boolean>;
   date: Date | null;
   timeSlot: string | null;
   availableEndTimes: string[];
@@ -25,41 +25,63 @@ export default function ReservationModal({
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [endTime, setEndTime] = useState("");
-
-  // 모달이 열릴 때 기본값(종료 시간은 시작 시간 다음 슬롯) 설정
-  useEffect(() => {
-    if (isOpen && availableEndTimes.length > 0) {
-      setEndTime(availableEndTimes[0]);
-    }
-  }, [isOpen, availableEndTimes]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen || !date || !timeSlot) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const effectiveEndTime = availableEndTimes.includes(endTime)
+    ? endTime
+    : (availableEndTimes[0] ?? "");
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!team) return alert("팀을 선택해주세요.");
-    
-    // TODO: Supabase 연동 시 DB 저장
-    alert("예약이 신청되었습니다.");
-    onSuccess(team, name, endTime, password); // 즉시 반영
-    
-    // 폼 초기화
-    setTeam("");
-    setName("");
-    setPassword("");
-    setEndTime("");
+    if (isSubmitting) return;
+
+    if (!team) {
+      alert("팀을 선택해주세요.");
+      return;
+    }
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      alert("예약자 이름을 입력해주세요.");
+      return;
+    }
+
+    if (!/^\d{4}$/.test(password)) {
+      alert("비밀번호는 숫자 4자리로 입력해주세요.");
+      return;
+    }
+
+    if (!effectiveEndTime) {
+      alert("종료 시간을 선택해주세요.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const succeeded = await onSuccess(team, trimmedName, effectiveEndTime, password);
+      if (succeeded) {
+        setTeam("");
+        setName("");
+        setPassword("");
+        setEndTime("");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
-        <div className="p-4 bg-[var(--color-primary)] text-white">
+        <div className="p-4 bg-primary text-white">
           <h2 className="text-lg font-bold">새 예약 신청</h2>
           <p className="text-sm opacity-90">
             {format(date, "yyyy년 MM월 dd일")}
           </p>
         </div>
-        
+
         <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
           <div className="flex gap-4">
             <div className="flex-1">
@@ -73,8 +95,9 @@ export default function ReservationModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">종료 시간</label>
               <select
                 required
-                className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[var(--color-primary)]"
-                value={endTime}
+                disabled={isSubmitting}
+                className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-primary disabled:bg-gray-100"
+                value={effectiveEndTime}
                 onChange={(e) => setEndTime(e.target.value)}
               >
                 {availableEndTimes.map((time) => (
@@ -88,7 +111,8 @@ export default function ReservationModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">팀 선택</label>
             <select
               required
-              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[var(--color-primary)]"
+              disabled={isSubmitting}
+              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-primary disabled:bg-gray-100"
               value={team}
               onChange={(e) => setTeam(e.target.value as TeamName)}
             >
@@ -104,9 +128,10 @@ export default function ReservationModal({
             <input
               type="text"
               required
+              disabled={isSubmitting}
               maxLength={10}
               placeholder="이름 입력 (최대 10자)"
-              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[var(--color-primary)]"
+              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-primary disabled:bg-gray-100"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -116,11 +141,13 @@ export default function ReservationModal({
             <label className="block text-sm font-medium text-gray-700 mb-1">비밀번호 (숫자 4자리)</label>
             <input
               type="password"
+              inputMode="numeric"
               required
+              disabled={isSubmitting}
               pattern="\d{4}"
               maxLength={4}
               placeholder="취소/수정 시 사용할 비밀번호"
-              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[var(--color-primary)]"
+              className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-primary disabled:bg-gray-100"
               value={password}
               onChange={(e) => setPassword(e.target.value.replace(/[^0-9]/g, ""))}
             />
@@ -129,16 +156,18 @@ export default function ReservationModal({
           <div className="flex gap-3 mt-4">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors"
+              className="flex-1 min-h-11 py-2.5 rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50"
             >
               취소
             </button>
             <button
               type="submit"
-              className="flex-1 py-2.5 rounded-lg font-medium text-white bg-[var(--color-primary)] hover:bg-[#00925a] transition-colors"
+              disabled={isSubmitting}
+              className="flex-1 min-h-11 py-2.5 rounded-lg font-medium text-white bg-primary hover:bg-emerald-700 transition-colors disabled:opacity-50"
             >
-              예약하기
+              {isSubmitting ? "예약 중..." : "예약하기"}
             </button>
           </div>
         </form>

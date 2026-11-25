@@ -27,11 +27,14 @@ export async function createReservations(reservations: Omit<ReservationDB, "id">
   const { data, error } = await supabase
     .from("reservations")
     .insert(reservations)
-    .select();
+    .select("id, date, time_slot, team_name, booker_name, group_id");
 
   if (error) {
     if (error.code === '23505') {
       throw new Error("이미 예약된 시간이 포함되어 있습니다. 다시 확인해주세요.");
+    }
+    if (error.code === '42501') {
+      throw new Error("예약 가능한 기간(이용일 D-14 ~ D-1)이 아니거나 권한이 없습니다.");
     }
     throw error;
   }

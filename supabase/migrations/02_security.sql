@@ -2,16 +2,21 @@
 ALTER TABLE reservations ENABLE ROW LEVEL SECURITY;
 
 -- 2. 누구나 예약 내역을 볼 수 있도록 SELECT 허용
-CREATE POLICY "누구나 예약 조회 가능" 
-ON reservations FOR SELECT 
+DROP POLICY IF EXISTS "누구나 예약 조회 가능" ON reservations;
+CREATE POLICY "누구나 예약 조회 가능"
+ON reservations FOR SELECT
 USING (true);
 
--- 3. 누구나 예약을 생성할 수 있도록 INSERT 허용
-CREATE POLICY "누구나 예약 생성 가능" 
-ON reservations FOR INSERT 
-WITH CHECK (true);
+-- 3. 예약 생성 허용 (KST 기준 내일 ~ 14일 이내만 허용, 당일/과거 차단)
+DROP POLICY IF EXISTS "누구나 예약 생성 가능" ON reservations;
+CREATE POLICY "누구나 예약 생성 가능"
+ON reservations FOR INSERT
+WITH CHECK (
+  date > (now() AT TIME ZONE 'Asia/Seoul')::DATE
+  AND date <= ((now() AT TIME ZONE 'Asia/Seoul')::DATE + INTERVAL '14 days')::DATE
+);
 
--- 4. 외부 API(익명 사용자)가 password 컬럼을 아예 조회하지 못하도록 차단 (경고 해결의 핵심)
+-- 4. 외부 API(익명 사용자)가 password 컬럼을 아예 조회하지 못하도록 차단
 REVOKE SELECT (password) ON reservations FROM anon, authenticated;
 
 -- 5. 안전한 예약 삭제를 위한 내부 함수(RPC) 생성
@@ -21,14 +26,28 @@ CREATE OR REPLACE FUNCTION delete_reservation_group(
 ) RETURNS BOOLEAN AS $$
 DECLARE
   v_deleted_count INTEGER;
+  v_today_kst DATE := (now() AT TIME ZONE 'Asia/Seoul')::DATE;
+  v_target_date DATE;
 BEGIN
-  -- 비밀번호가 일치하는 예약만 삭제
-  DELETE FROM reservations 
+  -- 예약 날짜 및 비밀번호 검증
+  SELECT MIN(date) INTO v_target_date
+  FROM reservations
   WHERE group_id = p_group_id AND password = p_password;
-  
-  -- 삭제된 행의 개수 확인
+
+  IF v_target_date IS NULL THEN
+    RAISE EXCEPTION '비밀번호가 일치하지 않거나 예약 정보를 찾을 수 없습니다.';
+  END IF;
+
+  IF v_target_date <= v_today_kst THEN
+    RAISE EXCEPTION '당일 또는 지난 예약은 취소할 수 없습니다.';
+  END IF;
+
+  -- 비밀번호가 일치하는 예약만 삭제
+  DELETE FROM reservations
+  WHERE group_id = p_group_id AND password = p_password;
+
   GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
-  
+
   IF v_deleted_count = 0 THEN
     RAISE EXCEPTION '비밀번호가 일치하지 않거나 예약 정보를 찾을 수 없습니다.';
   END IF;
@@ -44,30 +63,51 @@ CREATE OR REPLACE FUNCTION modify_reservation_group(
   p_new_reservations JSONB
 ) RETURNS BOOLEAN AS $$
 DECLARE
-  v_isValid BOOLEAN;
+  v_today_kst DATE := (now() AT TIME ZONE 'Asia/Seoul')::DATE;
+  v_target_date DATE;
+  v_invalid_new_date BOOLEAN;
 BEGIN
-  -- 1) 비밀번호 확인
-  SELECT EXISTS(
-    SELECT 1 FROM reservations 
-    WHERE group_id = p_group_id AND password = p_password
-  ) INTO v_isValid;
+  IF p_new_reservations IS NULL OR jsonb_array_length(p_new_reservations) = 0 THEN
+    RAISE EXCEPTION '수정할 예약 시간이 비어 있습니다.';
+  END IF;
 
-  IF NOT v_isValid THEN
+  -- 1) 비밀번호 및 기존 예약 날짜 확인
+  SELECT MIN(date) INTO v_target_date
+  FROM reservations
+  WHERE group_id = p_group_id AND password = p_password;
+
+  IF v_target_date IS NULL THEN
     RAISE EXCEPTION '비밀번호가 일치하지 않습니다.';
   END IF;
 
-  -- 2) 기존 그룹 예약 삭제
-  DELETE FROM reservations WHERE group_id = p_group_id;
+  IF v_target_date <= v_today_kst THEN
+    RAISE EXCEPTION '당일 또는 지난 예약은 수정할 수 없습니다.';
+  END IF;
 
-  -- 3) 새 예약 삽입
+  -- 2) 새로 요청된 날짜가 KST 기준 허용 범위(내일 ~ 14일 이내)인지 확인
+  SELECT EXISTS(
+    SELECT 1
+    FROM jsonb_array_elements(p_new_reservations) AS elem
+    WHERE (elem->>'date')::DATE <= v_today_kst
+       OR (elem->>'date')::DATE > (v_today_kst + INTERVAL '14 days')::DATE
+  ) INTO v_invalid_new_date;
+
+  IF v_invalid_new_date THEN
+    RAISE EXCEPTION '예약 가능한 기간(이용일 D-14 ~ D-1)이 아닙니다.';
+  END IF;
+
+  -- 3) 기존 그룹 예약 삭제
+  DELETE FROM reservations WHERE group_id = p_group_id AND password = p_password;
+
+  -- 4) 새 예약 삽입 (group_id와 password는 검증된 값으로 고정)
   INSERT INTO reservations (date, time_slot, team_name, booker_name, password, group_id)
-  SELECT 
+  SELECT
     (elem->>'date')::DATE,
     (elem->>'time_slot')::TIME,
     elem->>'team_name',
     elem->>'booker_name',
-    elem->>'password',
-    elem->>'group_id'
+    p_password,
+    p_group_id
   FROM jsonb_array_elements(p_new_reservations) AS elem;
 
   RETURN TRUE;
